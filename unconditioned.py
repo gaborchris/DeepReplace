@@ -121,6 +121,7 @@ def show_plot(examples, n):
 
 
 if __name__ == "__main__":
+   print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
    (train_x, train_y), (test_x, test_y) = load_data()
    print("Train", train_x.shape, train_y.shape)
    print("Train", test_x.shape, test_y.shape)
@@ -129,7 +130,7 @@ if __name__ == "__main__":
    g_model = define_generator(latent_dim)
    gan_model = define_gan(g_model, d_model)
    dataset = load_real_samples()
-   # train(g_model, d_model, gan_model, dataset, latent_dim, n_epochs=1)
+   train(g_model, d_model, gan_model, dataset, latent_dim, n_epochs=100, n_batch=128)
 
    # load model
    model = tf.keras.models.load_model('cgan_generator.h5')
