@@ -10,7 +10,7 @@ from tensorflow.keras import layers
 import time
 import pathlib
 
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 NOISE_DIM = 100
 
 num_to_char = {}
@@ -131,11 +131,12 @@ def image_norm(img):
   return (img - 127.5) / 127.5
 
 # Get ground truth data
-data_dir = tf.keras.utils.get_file('English',
-                                    origin='http://www.ee.surrey.ac.uk/CVSSP/demos/chars74k/EnglishFnt.tgz',
-                                    untar=True, extract=True)
-data_dir = pathlib.Path(data_dir)
-image_path = os.path.join(data_dir, "Img/GoodImg/Bmp")
+# data_dir = tf.keras.utils.get_file('English',
+#                                     origin='http://www.ee.surrey.ac.uk/CVSSP/demos/chars74k/EnglishFnt.tgz',
+#                                     untar=True, extract=True)
+# data_dir = pathlib.Path(data_dir)
+# image_path = os.path.join(data_dir, "Img/GoodImg/Bmp")
+image_path = os.path.join("/home/ubuntu/datasets/","Fnt")
 
 image_generator = tf.keras.preprocessing.image.ImageDataGenerator(preprocessing_function=lambda img: (img - 127.5) / 127.5)
 image_ground_truth = image_generator.flow_from_directory(image_path, target_size=(28, 28),
@@ -227,8 +228,9 @@ def train(dataset, epochs, ckpt_prefix):
                     
         print('Time for epoch {} is {} sec'.format(epoch+1, time.time()-start))
 
-checkpoint_dir = 'checkpoints'
+checkpoint_dir = '/home/ubuntu/checkpoints/'
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
+print(checkpoint_prefix)
 
 status = checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
 

@@ -24,6 +24,25 @@ for i in range(0, 26):
     num_to_char[i+10+26] = alphabet[i].lower()
 
 
+def generate_and_save_images(model, epoch, test_input, test_labels):
+    predictions = model([test_input, test_labels], training=False)
+
+    for i in range(predictions.shape[0]):
+        plt.subplot(4, 4, i + 1)
+        plt.imshow(predictions[i, :, :, :] / 2. + 0.5)
+        plt.xticks([])
+        plt.yticks([])
+        plt.xlabel(num_to_char[test_labels[i][0]])
+
+    plt.tight_layout()
+    plt.savefig('image_at_epoch_{:04d}.png'.format(epoch))
+    plt.close()
+
+
+def average(l):
+    return float(sum(l)) / len(l)
+
+
 def make_generator_model(n_classes=10):
     # Create class embedding channel
     input_label = tf.keras.layers.Input(shape=(1,))
@@ -87,25 +106,12 @@ def make_discriminator_model(n_classes=10):
     return model
 
 
-cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
 def discriminator_loss(real_output, fake_output):
     cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
     real_loss = cross_entropy(tf.ones_like(real_output), real_output)
     fake_loss = cross_entropy(tf.zeros_like(fake_output), fake_output)
     total_loss = real_loss + fake_loss
-    return total_loss
-
-
-def discriminator_loss_real(real_output):
-    cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-    real_loss = cross_entropy(tf.ones_like(real_output), real_output)
-    return real_loss
-
-
-def discriminator_loss_fake(fake_output):
-    cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-    fake_loss = cross_entropy(tf.ones_like(fake_output), fake_output)
-    return fake_loss
+    return total_loss, real_loss, fake_loss
 
 
 def generator_loss(predictions):
@@ -113,30 +119,14 @@ def generator_loss(predictions):
     return cross_entropy(tf.ones_like(predictions), predictions)
 
 
-def generate_and_save_images(model, epoch, test_input, test_labels):
-    predictions = model([test_input, test_labels], training=False)
-
-    for i in range(predictions.shape[0]):
-        plt.subplot(4, 4, i + 1)
-        plt.imshow(predictions[i, :, :, :] / 2. + 0.5)
-        plt.xticks([])
-        plt.yticks([])
-        plt.xlabel(num_to_char[test_labels[i][0]])
-
-    plt.tight_layout()
-    plt.savefig('image_at_epoch_{:04d}.png'.format(epoch))
-    plt.close()
-
-
-def image_norm(img):
-  return (img - 127.5) / 127.5
 
 # Get ground truth data
-data_dir = tf.keras.utils.get_file('English',
-                                    origin='http://www.ee.surrey.ac.uk/CVSSP/demos/chars74k/EnglishFnt.tgz',
-                                    untar=True, extract=True)
-data_dir = pathlib.Path(data_dir)
-image_path = os.path.join(data_dir, "Img/GoodImg/Bmp")
+# data_dir = tf.keras.utils.get_file('English',
+#                                     origin='http://www.ee.surrey.ac.uk/CVSSP/demos/chars74k/EnglishFnt.tgz',
+#                                     untar=True, extract=True)
+# data_dir = pathlib.Path(data_dir)
+# image_path = os.path.join(data_dir, "Img/GoodImg/Bmp")
+image_path = os.path.join("/home/ubuntu/datasets/", "Fnt")
 
 image_generator = tf.keras.preprocessing.image.ImageDataGenerator(preprocessing_function=lambda img: (img - 127.5) / 127.5)
 image_ground_truth = image_generator.flow_from_directory(image_path, target_size=(28, 28),
@@ -163,53 +153,30 @@ seed_labels = np.random.randint(0, num_classes, num_examples_to_generate).reshap
 
 # Define training procedure
 @tf.function
-def train_step(images, ground_truth_labels):
+def train_step(images, ground_truth_labels, update_gen=True):
     noise = tf.random.normal([BATCH_SIZE, NOISE_DIM])
     random_labels = np.random.randint(0, num_classes, BATCH_SIZE).reshape((-1, 1))
 
+    # compute gradients
     with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
         fakes = generator([noise, random_labels], training=True)
         ground_truth_preds = discriminator([images, ground_truth_labels], training=True)
         fake_preds = discriminator([fakes, random_labels], training=True)
+        if update_gen:
+            gen_loss = generator_loss(fake_preds)
+        disc_loss, disc_loss_real, disc_loss_fake = discriminator_loss(real_output=ground_truth_preds, fake_output=fake_preds) 
 
-        gen_loss = generator_loss(fake_preds)
+    # Update models
+    if update_gen:
         gradients_of_generator = gen_tape.gradient(gen_loss, generator.trainable_variables)
         generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
-
-        #disc_loss = discriminator_loss(real_output=ground_truth_preds, fake_output=fake_preds)
-        disc_loss_real = discriminator_loss_real(ground_truth_preds)
-        disc_loss_fake = discriminator_loss_fake(fake_preds)
-        disc_loss = disc_loss_real + disc_loss_fake
       
     gradients_of_discriminator = disc_tape.gradient(disc_loss, discriminator.trainable_variables)
-      
     discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, discriminator.trainable_variables))
     
-    tf.print('Generator:', gen_loss, 'Disc Real:', disc_loss_real, 'Disc Fake:', disc_loss_fake)
-    tf.print(gen_loss, disc_loss_real, disc_loss_fake, output_stream = 'file://losses.txt')
-
-
-@tf.function
-def train_step_alt(images, ground_truth_labels):
-    noise = tf.random.normal([BATCH_SIZE, NOISE_DIM])
-    random_labels = np.random.randint(0, num_classes, BATCH_SIZE).reshape((-1, 1))
-
-    with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
-        fakes = generator([noise, random_labels], training=True)
-        ground_truth_preds = discriminator([images, ground_truth_labels], training=True)
-        fake_preds = discriminator([fakes, random_labels], training=True)
-
-        '''
-        gen_loss = generator_loss(fake_preds)
-        gradients_of_generator = gen_tape.gradient(gen_loss, generator.trainable_variables)
-        generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
-        '''
-
-        disc_loss = discriminator_loss(real_output=ground_truth_preds, fake_output=fake_preds)
-      
-    gradients_of_discriminator = disc_tape.gradient(disc_loss, discriminator.trainable_variables)
-      
-    discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, discriminator.trainable_variables))
+    # tf.print('Generator:', gen_loss, 'Disc Real:', disc_loss_real, 'Disc Fake:', disc_loss_fake)
+    # tf.print(gen_loss, disc_loss_real, disc_loss_fake, output_stream = 'file://losses.txt')
+    return gen_loss, disc_loss_real, disc_loss_fake
 
 
 def train(dataset, epochs, ckpt_prefix):
@@ -217,9 +184,16 @@ def train(dataset, epochs, ckpt_prefix):
     for epoch in range(epochs):
         start = time.time()
         i = 0
+        g_loss = []
+        d_loss_real = []
+        d_loss_fake = []
         for (image_batch, labels_batch) in dataset:
-            train_step(image_batch[:int(BATCH_SIZE/2)], labels_batch[:int(BATCH_SIZE/2)])
-            train_step_alt(image_batch[int(BATCH_SIZE/2):], labels_batch[int(BATCH_SIZE/2):])
+            # gl, dl_fake, dl_real = train_step(image_batch[:int(BATCH_SIZE/2)], labels_batch[:int(BATCH_SIZE/2)], update_gen=True)
+            # train_step(image_batch[int(BATCH_SIZE/2):], labels_batch[int(BATCH_SIZE/2):])
+            gl, dl_real, dl_fake = train_step(image_batch, labels_batch, update_gen=True)
+            g_loss.append(gl)
+            d_loss_real.append(dl_real)
+            d_loss_fake.append(dl_fake)
             i += 1
             if i > len(dataset):
               break
@@ -233,8 +207,9 @@ def train(dataset, epochs, ckpt_prefix):
                 print(e)
                     
         print('Time for epoch {} is {} sec'.format(epoch+1, time.time()-start))
+        print('Generator:', average(g_loss), 'Disc Real:', average(d_loss_real), 'Disc Fake:', average(d_loss_fake))
 
-checkpoint_dir = 'checkpoints'
+checkpoint_dir = '/home/ubuntu/checkpoints/'
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
 
 status = checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
@@ -243,4 +218,4 @@ status = checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
 fakes = generator([seed, seed_labels], training=False)
 generate_and_save_images(generator, 0, seed, seed_labels)
 
-train(image_ground_truth, epochs=10, ckpt_prefix=checkpoint_prefix)
+train(image_ground_truth, epochs=2000, ckpt_prefix=checkpoint_prefix)
