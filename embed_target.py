@@ -11,7 +11,7 @@ import time
 import pathlib
 import itertools
 
-BATCH_SIZE = 64
+BATCH_SIZE = 256
 NOISE_DIM = 100
 
 num_to_char = {}

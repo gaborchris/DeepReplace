@@ -42,6 +42,17 @@ def average(l):
     return float(sum(l)) / len(l)
 
 
+def save_defaults(source_images):
+    for i in range(16):
+        plt.subplot(4, 4, i + 1)
+        plt.imshow(source_images[i, :, :, :] / 2. + 0.5)
+        plt.xticks([])
+        plt.yticks([])
+    plt.tight_layout()
+    plt.savefig('source_images.png')
+    plt.close()
+
+
 def make_generator_model(n_classes=10):
 
     # create style detection network
@@ -132,6 +143,7 @@ def generator_loss(predictions, output, input, gamma):
     cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
     base_loss = cross_entropy(tf.ones_like(predictions), predictions)
     reg_loss = base_loss + gamma*tf.norm(output - input)/output.shape[0]
+    # tf.print(reg_loss-base_loss)
     return base_loss, reg_loss
 
 
@@ -171,8 +183,9 @@ seed_labels = np.random.randint(0, num_classes, num_examples_to_generate).reshap
 
 images, labels = next(image_ground_truth)
 replace_images = images[:16, :, :, :]
+save_defaults(replace_images)
 
-GAMMA = 0.1
+GAMMA = 2e-4
 
 # Define training procedure
 @tf.function
@@ -226,8 +239,7 @@ def train(dataset, epochs, ckpt_prefix, save_epoch=20, image_epoch=20):
         if (epoch + 1) % image_epoch == 0:
             generate_and_save_images(generator, epoch + 1, seed, seed_labels, replace_images)
         if (epoch + 1) % save_epoch == 0:
-            # checkpoint.save(file_prefix=ckpt_prefix)
-            pass
+            checkpoint.save(file_prefix=ckpt_prefix)
 
         print('Time for epoch {} is {} sec'.format(epoch + 1, time.time() - start))
         print('Generator:', average(g_loss), 'Disc Real:', average(d_loss_real), 'Disc Fake:', average(d_loss_fake))
@@ -247,4 +259,4 @@ generator.summary()
 fakes = generator([seed, seed_labels, replace_images], training=False)
 generate_and_save_images(generator, 0, seed, seed_labels, replace_images)
 
-train(image_ground_truth, epochs=2000, ckpt_prefix=checkpoint_prefix, image_epoch=1)
+train(image_ground_truth, epochs=3000, ckpt_prefix=checkpoint_prefix, save_epoch=100, image_epoch=20)
