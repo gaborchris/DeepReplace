@@ -1,9 +1,5 @@
 import tensorflow as tf
 
-config = tf.ConfigProto()
-config.gpu_options.allow_growth = True  # dynamically grow the memory used on the GPU
-config.log_device_placement = True  # to log device placement (on which device the operation ran)
-
 import glob
 import imageio
 import matplotlib.pyplot as plt
@@ -15,7 +11,7 @@ import time
 import pathlib
 import itertools
 
-BATCH_SIZE = 1
+BATCH_SIZE = 64
 NOISE_DIM = 100
 
 num_to_char = {}
@@ -73,8 +69,6 @@ def make_generator_model(n_classes=10):
     seed_fc = tf.keras.layers.Reshape((7, 7, 256))(seed_fc)
 
     # merge embedding with seed encoder
-    # merge = tf.keras.layers.Concatenate()([seed_fc, upscaling])
-    # assert tuple(merge.shape) == (None, 7, 7, 256 + 1)
     merge = tf.keras.layers.Concatenate()([seed_fc, x, upscaling])
     assert tuple(merge.shape) == (None, 7, 7, 256 + 1 + 32)
 
@@ -170,9 +164,14 @@ checkpoint = tf.train.Checkpoint(generator_optimizer=generator_optimizer,
 num_examples_to_generate = 16
 seed = tf.random.normal([num_examples_to_generate, NOISE_DIM])
 seed_labels = np.random.randint(0, num_classes, num_examples_to_generate).reshape((-1, 1))
-replace_images = itertools.islice(image_ground_truth, 16)
+# replace_images = itertools.islice(image_ground_truth, 16)
 
-replace_images = np.array([x[0] for x in replace_images]).reshape(-1, 28, 28, 3)
+# replace_images = np.array([x[0] for x in replace_images]).reshape(-1, 28, 28, 3)
+for image, label in image_ground_truth:
+    print(image.shape)
+#     replace_images = image[:, 16]
+    break
+replace_images = np.zeros((16, 28, 28, 3))
 
 # Define training procedure
 @tf.function
@@ -236,4 +235,4 @@ generator.summary()
 fakes = generator([seed, seed_labels, replace_images], training=False)
 generate_and_save_images(generator, 0, seed, seed_labels, replace_images)
 
-train(image_ground_truth, epochs=2000, ckpt_prefix=checkpoint_prefix, image_epoch=20)
+train(image_ground_truth, epochs=2000, ckpt_prefix=checkpoint_prefix, image_epoch=1)

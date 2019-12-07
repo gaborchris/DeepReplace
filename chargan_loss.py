@@ -11,7 +11,7 @@ import time
 import pathlib
 
 
-BATCH_SIZE = 1
+BATCH_SIZE = 256
 NOISE_DIM = 100
 
 num_to_char = {}
@@ -208,6 +208,8 @@ def train(dataset, epochs, ckpt_prefix, save_epoch=20, image_epoch=20):
                     
         print('Time for epoch {} is {} sec'.format(epoch+1, time.time()-start))
         print('Generator:', average(g_loss), 'Disc Real:', average(d_loss_real), 'Disc Fake:', average(d_loss_fake))
+        with open('out.txt', 'a') as f:
+            print(str(average(g_loss)), str(average(d_loss_real)), str(average(d_loss_fake)), file=f)
 
 checkpoint_dir = '/home/ubuntu/checkpoints/'
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
@@ -218,4 +220,4 @@ status = checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
 fakes = generator([seed, seed_labels], training=False)
 generate_and_save_images(generator, 0, seed, seed_labels)
 
-train(image_ground_truth, epochs=2000, ckpt_prefix=checkpoint_prefix, image_epoch=20)
+train(image_ground_truth, epochs=2000, ckpt_prefix=checkpoint_prefix, image_epoch=10)
