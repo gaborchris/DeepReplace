@@ -229,10 +229,10 @@ def train(dataset, epochs, ckpt_prefix, save_epoch=20, image_epoch=20):
 
         print('Time for epoch {} is {} sec'.format(epoch + 1, time.time() - start))
         print('Generator:', average(g_loss), 'Disc Real:', average(d_loss_real), 'Disc Fake:', average(d_loss_fake))
-        print('real acc:', average(real_acc), 'fake acc:', average(fake_acc))
+        print('real acc:', average(d_acc_real), 'fake acc:', average(d_acc_fake))
         with open('out.txt', 'a') as f:
             print(str(average(g_loss)), str(average(d_loss_real)), str(average(d_loss_fake)),
-                  str(average(real_acc)),str(average(fake_acc)), file=f)
+                  str(average(d_acc_real)),str(average(d_acc_fake)), file=f)
 
 
 checkpoint_dir = '/home/ubuntu/checkpoints/'
