@@ -112,7 +112,8 @@ def make_discriminator_model(n_classes=10):
     x = layers.Dropout(0.5)(x)
 
     x = layers.Flatten()(x)
-    output = layers.Dense(1)(x)
+    output = layers.Dense(1, activation='sigmoid')(x)
+
     model = tf.keras.Model([input_image, input_label], output)
 
     return model
@@ -121,9 +122,11 @@ def make_discriminator_model(n_classes=10):
 def discriminator_loss(real_output, fake_output):
     cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
     real_loss = cross_entropy(tf.ones_like(real_output), real_output)
+    real_acc = tf.reduce_mean(tf.round(real_output))
     fake_loss = cross_entropy(tf.zeros_like(fake_output), fake_output)
+    fake_acc = 1 - tf.reduce_mean(tf.round(fake_output))
     total_loss = real_loss + fake_loss
-    return total_loss, real_loss, fake_loss
+    return total_loss, real_loss, fake_loss, real_acc, fake_acc
 
 
 def generator_loss(predictions):
@@ -166,27 +169,24 @@ seed = tf.random.normal([num_examples_to_generate, NOISE_DIM])
 seed_labels = np.random.randint(0, num_classes, num_examples_to_generate).reshape((-1, 1))
 # replace_images = itertools.islice(image_ground_truth, 16)
 
-# replace_images = np.array([x[0] for x in replace_images]).reshape(-1, 28, 28, 3)
-for image, label in image_ground_truth:
-    print(image.shape)
-#     replace_images = image[:, 16]
-    break
-replace_images = np.zeros((16, 28, 28, 3))
+images, labels = next(image_ground_truth)
+replace_images = images[:16, :, :, :]
 
 # Define training procedure
 @tf.function
-def train_step(images, ground_truth_labels, update_gen=True):
+def train_step(gen_images, disc_images, ground_truth_labels, update_gen=True):
 
-    noise = tf.random.normal([BATCH_SIZE, NOISE_DIM])
-    random_labels = np.random.randint(0, num_classes, BATCH_SIZE).reshape((-1, 1))
+    noise = tf.random.normal([gen_images.shape[0], NOISE_DIM])
+    random_labels = np.random.randint(0, num_classes, gen_images.shape[0]).reshape((-1, 1))
 
     # compute gradients
     with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
-        fakes = generator([noise, random_labels, images], training=True)
-        ground_truth_preds = discriminator([images, ground_truth_labels], training=True)
+        fakes = generator([noise, random_labels, gen_images], training=True)
+        ground_truth_preds = discriminator([disc_images, ground_truth_labels], training=True)
         fake_preds = discriminator([fakes, random_labels], training=True)
         gen_loss = generator_loss(fake_preds)
-        disc_loss, disc_loss_real, disc_loss_fake = discriminator_loss(real_output=ground_truth_preds, fake_output=fake_preds)
+        # tf.print(ground_truth_preds)
+        disc_loss, disc_loss_real, disc_loss_fake, real_acc, fake_acc = discriminator_loss(real_output=ground_truth_preds, fake_output=fake_preds)
 
         # Update models
     gradients_of_generator = gen_tape.gradient(gen_loss, generator.trainable_variables)
@@ -195,7 +195,7 @@ def train_step(images, ground_truth_labels, update_gen=True):
     gradients_of_discriminator = disc_tape.gradient(disc_loss, discriminator.trainable_variables)
     discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, discriminator.trainable_variables))
 
-    return gen_loss, disc_loss_real, disc_loss_fake
+    return gen_loss, disc_loss_real, disc_loss_fake, real_acc, fake_acc
 
 
 def train(dataset, epochs, ckpt_prefix, save_epoch=20, image_epoch=20):
@@ -206,8 +206,14 @@ def train(dataset, epochs, ckpt_prefix, save_epoch=20, image_epoch=20):
         g_loss = []
         d_loss_real = []
         d_loss_fake = []
+        d_acc_fake = []
+        d_acc_real = []
         for (image_batch, labels_batch) in dataset:
-            gl, dl_real, dl_fake = train_step(image_batch, labels_batch, update_gen=True)
+            gen_images = image_batch
+            disc_images, labels_batch = next(dataset)
+            gl, dl_real, dl_fake, real_acc, fake_acc = train_step(gen_images, disc_images, labels_batch, update_gen=True)
+            d_acc_fake.append(fake_acc.numpy())
+            d_acc_real.append(real_acc.numpy())
             g_loss.append(gl)
             d_loss_real.append(dl_real)
             d_loss_fake.append(dl_fake)
@@ -223,6 +229,10 @@ def train(dataset, epochs, ckpt_prefix, save_epoch=20, image_epoch=20):
 
         print('Time for epoch {} is {} sec'.format(epoch + 1, time.time() - start))
         print('Generator:', average(g_loss), 'Disc Real:', average(d_loss_real), 'Disc Fake:', average(d_loss_fake))
+        print('real acc:', average(real_acc), 'fake acc:', average(fake_acc))
+        with open('out.txt', 'a') as f:
+            print(str(average(g_loss)), str(average(d_loss_real)), str(average(d_loss_fake)),
+                  str(average(real_acc)),str(average(fake_acc)), file=f)
 
 
 checkpoint_dir = '/home/ubuntu/checkpoints/'
