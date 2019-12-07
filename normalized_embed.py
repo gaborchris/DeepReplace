@@ -9,7 +9,6 @@ import PIL
 from tensorflow.keras import layers
 import time
 import pathlib
-import itertools
 
 BATCH_SIZE = 64
 NOISE_DIM = 100
@@ -129,9 +128,11 @@ def discriminator_loss(real_output, fake_output):
     return total_loss, real_loss, fake_loss, real_acc, fake_acc
 
 
-def generator_loss(predictions):
+def generator_loss(predictions, output, input, gamma):
     cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-    return cross_entropy(tf.ones_like(predictions), predictions)
+    base_loss = cross_entropy(tf.ones_like(predictions), predictions)
+    reg_loss = base_loss + gamma*tf.norm(output - input)/output.shape[0]
+    return base_loss, reg_loss
 
 
 # Get ground truth data
@@ -167,10 +168,11 @@ checkpoint = tf.train.Checkpoint(generator_optimizer=generator_optimizer,
 num_examples_to_generate = 16
 seed = tf.random.normal([num_examples_to_generate, NOISE_DIM])
 seed_labels = np.random.randint(0, num_classes, num_examples_to_generate).reshape((-1, 1))
-# replace_images = itertools.islice(image_ground_truth, 16)
 
 images, labels = next(image_ground_truth)
 replace_images = images[:16, :, :, :]
+
+GAMMA = 0.1
 
 # Define training procedure
 @tf.function
@@ -184,12 +186,12 @@ def train_step(gen_images, disc_images, ground_truth_labels, update_gen=True):
         fakes = generator([noise, random_labels, gen_images], training=True)
         ground_truth_preds = discriminator([disc_images, ground_truth_labels], training=True)
         fake_preds = discriminator([fakes, random_labels], training=True)
-        gen_loss = generator_loss(fake_preds)
+        gen_loss, gen_reg_loss = generator_loss(fake_preds, fakes, gen_images, gamma=GAMMA)
         # tf.print(ground_truth_preds)
         disc_loss, disc_loss_real, disc_loss_fake, real_acc, fake_acc = discriminator_loss(real_output=ground_truth_preds, fake_output=fake_preds)
 
         # Update models
-    gradients_of_generator = gen_tape.gradient(gen_loss, generator.trainable_variables)
+    gradients_of_generator = gen_tape.gradient(gen_reg_loss, generator.trainable_variables)
     generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
 
     gradients_of_discriminator = disc_tape.gradient(disc_loss, discriminator.trainable_variables)
