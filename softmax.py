@@ -23,8 +23,8 @@ num_classes = 62
 # GAMMA = 5e-3
 # GAMMA_DECAY = 0.95
 # GAMMA = 1.66e-5
-GAMMA = 1e-5
-GAMMA_DECAY = 1.01
+GAMMA = 5e-2
+GAMMA_DECAY = 1.00
 G_LR = 3e-4
 D_LR = 1e-4
 
@@ -181,7 +181,7 @@ def softmax_loss(y_true, y_pred):
 
 
 def discriminator_loss(real_output, fake_output):
-    cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=False)
+    cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=False, label_smoothing=0.1)
     real_loss = cross_entropy(tf.ones_like(real_output), real_output)
     real_acc = tf.reduce_mean(tf.round(real_output))
     fake_loss = cross_entropy(tf.zeros_like(fake_output), fake_output)
@@ -192,16 +192,14 @@ def discriminator_loss(real_output, fake_output):
 
 def generator_loss(predictions, output, input, softmax_preds, label, gamma):
     cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+    cross_entropy_2 = tf.keras.losses.BinaryCrossentropy(from_logits=False, label_smoothing=0.1)
     base_loss = cross_entropy(tf.ones_like(predictions), predictions)
-    # cols =label[:, 0]
-    # tf.print(cols)
-    # label_preds = [softmax_preds[i, x] for i in range(softmax_preds.shape[0]) for x in label[:, 0]]
-    # tf.print(label_preds)
-    # softmax_loss = tf.keras.losses.BinaryCrossentropy(tf.ones_like(predictions), softmax_preds[:,label])
-    # reg_loss = base_loss + gamma*tf.norm(output - input)/output.shape[0] + softmax_loss
+    idx = tf.transpose(tf.stack((tf.dtypes.cast(tf.range(softmax_preds.shape[0]), tf.int64), label[:, 0])))
+    label_preds = tf.gather_nd(softmax_preds, idx)
+    softmax_loss = cross_entropy_2(tf.ones_like(predictions), label_preds)
     reg_loss = base_loss + gamma*tf.norm(output - input)/output.shape[0]
-    # tf.print(reg_loss-base_loss)
-    return base_loss, reg_loss
+    # total_loss = reg_loss + softmax_loss
+    return base_loss, reg_loss, softmax_loss
 
 
 if __name__ == "__main__":
@@ -252,7 +250,6 @@ if __name__ == "__main__":
     def train_step(gen_images, disc_images, ground_truth_labels, gamma, random_label, random_noise):
         # compute gradients
         with tf.GradientTape() as sm_tape, tf.GradientTape() as disc_tape, tf.GradientTape() as gen_tape:
-            tf.print(random_label)
             fakes = generator([random_noise, random_label, gen_images], training=True)
             ground_truth_preds = discriminator([disc_images, ground_truth_labels], training=True)
             fake_preds = discriminator([fakes, random_label], training=True)
@@ -260,20 +257,20 @@ if __name__ == "__main__":
             softmax_fake_preds = softmax_discriminator([fakes], training=False)
 
             sm_disc_loss = softmax_loss(y_pred=softmax_preds, y_true=ground_truth_labels)
-            gen_loss, gen_reg_loss = generator_loss(fake_preds, fakes, gen_images, softmax_fake_preds, random_label, gamma=gamma)
+            gen_loss, gen_reg_loss, gen_sm_loss = generator_loss(fake_preds, fakes, gen_images, softmax_fake_preds, random_label, gamma=gamma)
             disc_loss, disc_loss_real, disc_loss_fake, real_acc, fake_acc = discriminator_loss(real_output=ground_truth_preds, fake_output=fake_preds)
 
             # Update models
         grads_of_softmax = sm_tape.gradient(sm_disc_loss, softmax_discriminator.trainable_variables)
         softmax_optimizer.apply_gradients(zip(grads_of_softmax, softmax_discriminator.trainable_variables))
 
-        gradients_of_generator = gen_tape.gradient(gen_reg_loss, generator.trainable_variables)
+        gradients_of_generator = gen_tape.gradient((gen_reg_loss, gen_sm_loss), generator.trainable_variables)
         generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
 
         gradients_of_discriminator = disc_tape.gradient(disc_loss, discriminator.trainable_variables)
         discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, discriminator.trainable_variables))
 
-        return gen_loss, disc_loss_real, disc_loss_fake, real_acc, fake_acc
+        return gen_loss, disc_loss_real, disc_loss_fake, real_acc, fake_acc, sm_disc_loss
 
 
     def train(dataset, epochs, ckpt_prefix, save_epoch=20, image_epoch=20):
@@ -288,12 +285,14 @@ if __name__ == "__main__":
             d_loss_fake = []
             d_acc_fake = []
             d_acc_real = []
+            sm_loss = []
             for (image_batch, labels_batch) in dataset:
                 gen_images = image_batch
                 disc_images, labels_batch = next(dataset)
                 noise = tf.random.normal([gen_images.shape[0], NOISE_DIM])
                 random_labels = np.random.randint(0, num_classes, gen_images.shape[0]).reshape((-1, 1))
-                gl, dl_real, dl_fake, real_acc, fake_acc = train_step(gen_images, disc_images, labels_batch, gamma_i, random_labels, noise)
+                gl, dl_real, dl_fake, real_acc, fake_acc, softmax_loss = train_step(gen_images, disc_images, labels_batch, gamma_i, random_labels, noise)
+                sm_loss.append(softmax_loss)
                 d_acc_fake.append(fake_acc.numpy())
                 d_acc_real.append(real_acc.numpy())
                 g_loss.append(gl)
@@ -313,6 +312,7 @@ if __name__ == "__main__":
 
             print('Time for epoch {} is {} sec'.format(epoch + 1, time.time() - start))
             print('Generator:', average(g_loss), 'Disc Real:', average(d_loss_real), 'Disc Fake:', average(d_loss_fake))
+            print('SM loss:', average(sm_loss))
             print('real acc:', average(d_acc_real), 'fake acc:', average(d_acc_fake))
             with open('out.txt', 'a') as f:
                 print(str(average(g_loss)), str(average(d_loss_real)), str(average(d_loss_fake)),
@@ -330,4 +330,4 @@ if __name__ == "__main__":
     fakes = generator([seed, seed_labels, replace_images], training=False)
     generate_and_save_images(generator, 0, seed, seed_labels, replace_images)
 
-    train(image_ground_truth, epochs=500, ckpt_prefix=checkpoint_prefix, save_epoch=100, image_epoch=10)
+    train(image_ground_truth, epochs=500, ckpt_prefix=checkpoint_prefix, save_epoch=100, image_epoch=5)
