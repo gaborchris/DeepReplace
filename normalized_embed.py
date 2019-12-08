@@ -19,7 +19,11 @@ import pathlib
 BATCH_SIZE = 16
 NOISE_DIM = 100
 num_classes = 62
-GAMMA = 2.5e-3
+
+# GAMMA = 5e-3
+# GAMMA_DECAY = 0.95
+GAMMA = 1.66e-5
+GAMMA_DECAY = 1.012
 G_LR = 3e-4
 D_LR = 3e-4
 
@@ -123,18 +127,18 @@ def make_discriminator_model(n_classes=10):
     merge = tf.keras.layers.Concatenate()([input_image, upscaling])
 
     # define classification architecture
-    # x = tf.keras.layers.Conv2D(64, (5, 5), strides=(2, 2), padding='same')(merge)
+    x = tf.keras.layers.Conv2D(64, (5, 5), strides=(2, 2), padding='same')(merge)
+    x = tf.keras.layers.LeakyReLU()(x)
+    x = tf.keras.layers.Dropout(0.4)(x)
+
+    # x = tf.keras.layers.Conv2D(64, (3, 3), strides=(2, 2), padding='same')(merge)
     # x = tf.keras.layers.LeakyReLU()(x)
     # x = tf.keras.layers.Dropout(0.3)(x)
-
-    x = tf.keras.layers.Conv2D(64, (3, 3), strides=(2, 2), padding='same')(merge)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.Dropout(0.3)(x)
-    print(x.shape)
-    x = tf.keras.layers.Conv2D(64, (3, 3), strides=(2, 2), padding='same')(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-    x = tf.keras.layers.Dropout(0.3)(x)
-    print(x.shape)
+    # print(x.shape)
+    # x = tf.keras.layers.Conv2D(64, (3, 3), strides=(2, 2), padding='same')(x)
+    # x = tf.keras.layers.LeakyReLU()(x)
+    # x = tf.keras.layers.Dropout(0.3)(x)
+    # print(x.shape)
 
     x = layers.Conv2D(128, (5, 5), strides=(2, 2), padding='same')(x)
     x = layers.LeakyReLU()(x)
@@ -209,7 +213,7 @@ if __name__ == "__main__":
 
     # Define training procedure
     @tf.function
-    def train_step(gen_images, disc_images, ground_truth_labels, update_gen=True):
+    def train_step(gen_images, disc_images, ground_truth_labels, gamma):
 
         noise = tf.random.normal([gen_images.shape[0], NOISE_DIM])
         random_labels = np.random.randint(0, num_classes, gen_images.shape[0]).reshape((-1, 1))
@@ -219,7 +223,7 @@ if __name__ == "__main__":
             fakes = generator([noise, random_labels, gen_images], training=True)
             ground_truth_preds = discriminator([disc_images, ground_truth_labels], training=True)
             fake_preds = discriminator([fakes, random_labels], training=True)
-            gen_loss, gen_reg_loss = generator_loss(fake_preds, fakes, gen_images, gamma=GAMMA)
+            gen_loss, gen_reg_loss = generator_loss(fake_preds, fakes, gen_images, gamma=gamma)
             # tf.print(ground_truth_preds)
             disc_loss, disc_loss_real, disc_loss_fake, real_acc, fake_acc = discriminator_loss(real_output=ground_truth_preds, fake_output=fake_preds)
 
@@ -235,6 +239,8 @@ if __name__ == "__main__":
 
     def train(dataset, epochs, ckpt_prefix, save_epoch=20, image_epoch=20):
         print("Starting training")
+        gamma_i = GAMMA
+        g_i = 0
         for epoch in range(epochs):
             start = time.time()
             i = 0
@@ -246,7 +252,8 @@ if __name__ == "__main__":
             for (image_batch, labels_batch) in dataset:
                 gen_images = image_batch
                 disc_images, labels_batch = next(dataset)
-                gl, dl_real, dl_fake, real_acc, fake_acc = train_step(gen_images, disc_images, labels_batch, update_gen=True)
+                gl, dl_real, dl_fake, real_acc, fake_acc = train_step(gen_images, disc_images, labels_batch, gamma_i)
+                # gl, dl_real, dl_fake, real_acc, fake_acc = train_step(gen_images, disc_images, labels_batch, gamma_i * (g_i%2))
                 d_acc_fake.append(fake_acc.numpy())
                 d_acc_real.append(real_acc.numpy())
                 g_loss.append(gl)
@@ -255,6 +262,9 @@ if __name__ == "__main__":
                 i += 1
                 if i > len(dataset):
                     break
+            gamma_i = gamma_i*GAMMA_DECAY
+            print('gamma: ', gamma_i)
+            g_i += 1
 
             if (epoch + 1) % image_epoch == 0:
                 generate_and_save_images(generator, epoch + 1, seed, seed_labels, replace_images)
@@ -280,4 +290,4 @@ if __name__ == "__main__":
     fakes = generator([seed, seed_labels, replace_images], training=False)
     generate_and_save_images(generator, 0, seed, seed_labels, replace_images)
 
-    train(image_ground_truth, epochs=3000, ckpt_prefix=checkpoint_prefix, save_epoch=20, image_epoch=1)
+    train(image_ground_truth, epochs=500, ckpt_prefix=checkpoint_prefix, save_epoch=100, image_epoch=20)
