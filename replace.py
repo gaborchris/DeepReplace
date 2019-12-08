@@ -6,6 +6,15 @@ import cv2
 BLUR_WIDTH = 10
 FILTER_SIZE = 9 #must be odd integer
 
+num_to_char = {}
+alphabet = 'abcdefghijklmnopqrstuvwxyz'
+for i in range(0, 10):
+    num_to_char[i] = str(i)
+for i in range(0, 26):
+    num_to_char[i + 10] = alphabet[i].upper()
+for i in range(0, 26):
+    num_to_char[i + 10 + 26] = alphabet[i].lower()
+
 s = input('Desired string: ')
 
 img = mpimg.imread(input('Path to style image: '))
@@ -13,6 +22,7 @@ img = mpimg.imread(input('Path to style image: '))
 imgs = list()
 for c in s:
 	#TODO: append image produced by generator(c, img)
+	label = num_to_char[c]
 	imgs.append(img)
 
 h, w, _ = imgs[0].shape
