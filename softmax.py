@@ -16,7 +16,7 @@ from tensorflow.keras import layers
 import time
 import pathlib
 
-BATCH_SIZE = 64
+BATCH_SIZE = 16
 NOISE_DIM = 100
 num_classes = 62
 
@@ -132,15 +132,6 @@ def make_discriminator_model(n_classes=10):
     x = tf.keras.layers.LeakyReLU()(x)
     x = tf.keras.layers.Dropout(0.4)(x)
 
-    # x = tf.keras.layers.Conv2D(64, (3, 3), strides=(2, 2), padding='same')(merge)
-    # x = tf.keras.layers.LeakyReLU()(x)
-    # x = tf.keras.layers.Dropout(0.3)(x)
-    # print(x.shape)
-    # x = tf.keras.layers.Conv2D(64, (3, 3), strides=(2, 2), padding='same')(x)
-    # x = tf.keras.layers.LeakyReLU()(x)
-    # x = tf.keras.layers.Dropout(0.3)(x)
-    # print(x.shape)
-
     x = layers.Conv2D(128, (5, 5), strides=(2, 2), padding='same')(x)
     x = layers.LeakyReLU()(x)
     x = layers.Dropout(0.3)(x)
@@ -174,15 +165,19 @@ def make_softmax_model(n_classes=62):
     print(x.shape)
 
     x = layers.Flatten()(x)
-    output = layers.Dense(n_classes, activation='softmax')(x)
+    output = layers.Dense(n_classes)(x)
+    output = layers.Softmax()(output)
     print(output.shape)
 
     model = tf.keras.Model([input_image], output)
     return model
 
 
-def softmax_loss(y_pred, y_true):
-    return tf.keras.losses.sparse_categorical_crossentropy(y_true, y_pred)
+def softmax_loss(y_true, y_pred):
+    ce = tf.keras.losses.SparseCategoricalCrossentropy()
+    loss = ce(y_true, y_pred)
+    return loss
+
 
 
 def discriminator_loss(real_output, fake_output):
@@ -198,8 +193,13 @@ def discriminator_loss(real_output, fake_output):
 def generator_loss(predictions, output, input, softmax_preds, label, gamma):
     cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
     base_loss = cross_entropy(tf.ones_like(predictions), predictions)
-    softmax_loss = tf.keras.losses.BinaryCrossentropy(tf.ones_like(predictions), softmax_preds[:,label])
-    reg_loss = base_loss + gamma*tf.norm(output - input)/output.shape[0] + softmax_loss
+    # cols =label[:, 0]
+    # tf.print(cols)
+    # label_preds = [softmax_preds[i, x] for i in range(softmax_preds.shape[0]) for x in label[:, 0]]
+    # tf.print(label_preds)
+    # softmax_loss = tf.keras.losses.BinaryCrossentropy(tf.ones_like(predictions), softmax_preds[:,label])
+    # reg_loss = base_loss + gamma*tf.norm(output - input)/output.shape[0] + softmax_loss
+    reg_loss = base_loss + gamma*tf.norm(output - input)/output.shape[0]
     # tf.print(reg_loss-base_loss)
     return base_loss, reg_loss
 
@@ -233,10 +233,10 @@ if __name__ == "__main__":
 
 
 
-    checkpoint = tf.train.Checkpoint(generator_optimizer=generator_optimizer,
-                                     discriminator_optimizer=discriminator_optimizer,
-                                     generator=generator,
-                                     discriminator=discriminator)
+    # checkpoint = tf.train.Checkpoint(generator_optimizer=generator_optimizer,
+    #                                  discriminator_optimizer=discriminator_optimizer,
+    #                                  generator=generator,
+    #                                  discriminator=discriminator)
 
     num_examples_to_generate = 16
     seed = tf.random.normal([num_examples_to_generate, NOISE_DIM])
@@ -249,26 +249,23 @@ if __name__ == "__main__":
 
     # Define training procedure
     @tf.function
-    def train_step(gen_images, disc_images, ground_truth_labels, gamma):
-
-        noise = tf.random.normal([gen_images.shape[0], NOISE_DIM])
-        random_labels = np.random.randint(0, num_classes, gen_images.shape[0]).reshape((-1, 1))
-
+    def train_step(gen_images, disc_images, ground_truth_labels, gamma, random_label, random_noise):
         # compute gradients
-        with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
-            fakes = generator([noise, random_labels, gen_images], training=True)
+        with tf.GradientTape() as sm_tape, tf.GradientTape() as disc_tape, tf.GradientTape() as gen_tape:
+            tf.print(random_label)
+            fakes = generator([random_noise, random_label, gen_images], training=True)
             ground_truth_preds = discriminator([disc_images, ground_truth_labels], training=True)
-            fake_preds = discriminator([fakes, random_labels], training=True)
-            softmax_preds = softmax_discriminator([image_ground_truth], training=True)
+            fake_preds = discriminator([fakes, random_label], training=True)
+            softmax_preds = softmax_discriminator([disc_images], training=True)
             softmax_fake_preds = softmax_discriminator([fakes], training=False)
 
-            sm_disc_loss = softmax_loss(softmax_preds, ground_truth_labels)
-            gen_loss, gen_reg_loss = generator_loss(fake_preds, fakes, gen_images, softmax_fake_preds, random_labels, gamma=gamma)
+            sm_disc_loss = softmax_loss(y_pred=softmax_preds, y_true=ground_truth_labels)
+            gen_loss, gen_reg_loss = generator_loss(fake_preds, fakes, gen_images, softmax_fake_preds, random_label, gamma=gamma)
             disc_loss, disc_loss_real, disc_loss_fake, real_acc, fake_acc = discriminator_loss(real_output=ground_truth_preds, fake_output=fake_preds)
 
             # Update models
-        grads_of_softmax = gen_tape.gradient(sm_disc_loss, softmax_discriminator.trainable_variables)
-        generator_optimizer.apply_gradients(zip(grads_of_softmax, softmax_discriminator.trainable_variables))
+        grads_of_softmax = sm_tape.gradient(sm_disc_loss, softmax_discriminator.trainable_variables)
+        softmax_optimizer.apply_gradients(zip(grads_of_softmax, softmax_discriminator.trainable_variables))
 
         gradients_of_generator = gen_tape.gradient(gen_reg_loss, generator.trainable_variables)
         generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
@@ -294,8 +291,9 @@ if __name__ == "__main__":
             for (image_batch, labels_batch) in dataset:
                 gen_images = image_batch
                 disc_images, labels_batch = next(dataset)
-                gl, dl_real, dl_fake, real_acc, fake_acc = train_step(gen_images, disc_images, labels_batch, gamma_i)
-                # gl, dl_real, dl_fake, real_acc, fake_acc = train_step(gen_images, disc_images, labels_batch, gamma_i * (g_i%2))
+                noise = tf.random.normal([gen_images.shape[0], NOISE_DIM])
+                random_labels = np.random.randint(0, num_classes, gen_images.shape[0]).reshape((-1, 1))
+                gl, dl_real, dl_fake, real_acc, fake_acc = train_step(gen_images, disc_images, labels_batch, gamma_i, random_labels, noise)
                 d_acc_fake.append(fake_acc.numpy())
                 d_acc_real.append(real_acc.numpy())
                 g_loss.append(gl)
@@ -310,8 +308,8 @@ if __name__ == "__main__":
 
             if (epoch + 1) % image_epoch == 0:
                 generate_and_save_images(generator, epoch + 1, seed, seed_labels, replace_images)
-            if (epoch + 1) % save_epoch == 0:
-                checkpoint.save(file_prefix=ckpt_prefix)
+            # if (epoch + 1) % save_epoch == 0:
+            #     checkpoint.save(file_prefix=ckpt_prefix)
 
             print('Time for epoch {} is {} sec'.format(epoch + 1, time.time() - start))
             print('Generator:', average(g_loss), 'Disc Real:', average(d_loss_real), 'Disc Fake:', average(d_loss_fake))

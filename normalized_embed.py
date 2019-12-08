@@ -22,8 +22,9 @@ num_classes = 62
 
 # GAMMA = 5e-3
 # GAMMA_DECAY = 0.95
-GAMMA = 1.66e-5
-GAMMA_DECAY = 1.012
+# GAMMA = 1.66e-5
+GAMMA = 1e-5
+GAMMA_DECAY = 1.02
 G_LR = 3e-4
 D_LR = 3e-4
 
@@ -71,30 +72,30 @@ def make_generator_model(n_classes=10):
 
     # create style detection network
     input_style = tf.keras.layers.Input(shape=(28, 28, 3))
-    x = tf.keras.layers.Conv2D(32, (3, 3), strides=(2, 2), padding='same')(input_style)
+    x = tf.keras.layers.Conv2D(128, (3, 3), strides=(2, 2), padding='same')(input_style)
     x = tf.keras.layers.LeakyReLU()(x)
     x = tf.keras.layers.Dropout(0.4)(x)
-    x = tf.keras.layers.Conv2D(32, (3, 3), strides=(2, 2), padding='same')(x)
+    x = tf.keras.layers.Conv2D(128, (3, 3), strides=(2, 2), padding='same')(x)
     x = tf.keras.layers.LeakyReLU()(x)
     x = tf.keras.layers.Dropout(0.4)(x)
-    assert tuple(x.shape) == (None, 7, 7, 32)
+    assert tuple(x.shape) == (None, 7, 7, 128)
 
     # Create class embedding channel
     input_label = tf.keras.layers.Input(shape=(1,))
     label_embedding = tf.keras.layers.Embedding(n_classes, 50)(input_label)
-    upscaling = tf.keras.layers.Dense(7 * 7 * 1)(label_embedding)
-    upscaling = tf.keras.layers.Reshape((7, 7, 1))(upscaling)
+    upscaling = tf.keras.layers.Dense(7 * 7 * 128)(label_embedding)
+    upscaling = tf.keras.layers.Reshape((7, 7, 128))(upscaling)
 
     # create seed encoding network
     seed_input = tf.keras.layers.Input(shape=(NOISE_DIM,))
-    seed_fc = tf.keras.layers.Dense(7 * 7 * 256, use_bias=False)(seed_input)
+    seed_fc = tf.keras.layers.Dense(7 * 7 * 32, use_bias=False)(seed_input)
     seed_fc = tf.keras.layers.BatchNormalization()(seed_fc)
     seed_fc = tf.keras.layers.LeakyReLU()(seed_fc)
-    seed_fc = tf.keras.layers.Reshape((7, 7, 256))(seed_fc)
+    seed_fc = tf.keras.layers.Reshape((7, 7, 32))(seed_fc)
 
     # merge embedding with seed encoder
     merge = tf.keras.layers.Concatenate()([seed_fc, x, upscaling])
-    assert tuple(merge.shape) == (None, 7, 7, 256 + 1 + 32)
+    assert tuple(merge.shape) == (None, 7, 7, 128 + 128 + 32)
 
     x = layers.Conv2DTranspose(128, (5, 5), strides=(1, 1), padding='same', use_bias=False)(merge)
     x = layers.BatchNormalization()(x)
@@ -131,15 +132,6 @@ def make_discriminator_model(n_classes=10):
     x = tf.keras.layers.LeakyReLU()(x)
     x = tf.keras.layers.Dropout(0.4)(x)
 
-    # x = tf.keras.layers.Conv2D(64, (3, 3), strides=(2, 2), padding='same')(merge)
-    # x = tf.keras.layers.LeakyReLU()(x)
-    # x = tf.keras.layers.Dropout(0.3)(x)
-    # print(x.shape)
-    # x = tf.keras.layers.Conv2D(64, (3, 3), strides=(2, 2), padding='same')(x)
-    # x = tf.keras.layers.LeakyReLU()(x)
-    # x = tf.keras.layers.Dropout(0.3)(x)
-    # print(x.shape)
-
     x = layers.Conv2D(128, (5, 5), strides=(2, 2), padding='same')(x)
     x = layers.LeakyReLU()(x)
     x = layers.Dropout(0.3)(x)
@@ -155,7 +147,7 @@ def make_discriminator_model(n_classes=10):
 
 
 def discriminator_loss(real_output, fake_output):
-    cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+    cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=False, label_smoothing=0.1)
     real_loss = cross_entropy(tf.ones_like(real_output), real_output)
     real_acc = tf.reduce_mean(tf.round(real_output))
     fake_loss = cross_entropy(tf.zeros_like(fake_output), fake_output)
@@ -213,18 +205,12 @@ if __name__ == "__main__":
 
     # Define training procedure
     @tf.function
-    def train_step(gen_images, disc_images, ground_truth_labels, gamma):
-
-        noise = tf.random.normal([gen_images.shape[0], NOISE_DIM])
-        random_labels = np.random.randint(0, num_classes, gen_images.shape[0]).reshape((-1, 1))
-
-        # compute gradients
+    def train_step(gen_images, disc_images, ground_truth_labels, gamma, noise, random_labels):
         with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
             fakes = generator([noise, random_labels, gen_images], training=True)
             ground_truth_preds = discriminator([disc_images, ground_truth_labels], training=True)
             fake_preds = discriminator([fakes, random_labels], training=True)
             gen_loss, gen_reg_loss = generator_loss(fake_preds, fakes, gen_images, gamma=gamma)
-            # tf.print(ground_truth_preds)
             disc_loss, disc_loss_real, disc_loss_fake, real_acc, fake_acc = discriminator_loss(real_output=ground_truth_preds, fake_output=fake_preds)
 
             # Update models
@@ -252,8 +238,9 @@ if __name__ == "__main__":
             for (image_batch, labels_batch) in dataset:
                 gen_images = image_batch
                 disc_images, labels_batch = next(dataset)
-                gl, dl_real, dl_fake, real_acc, fake_acc = train_step(gen_images, disc_images, labels_batch, gamma_i)
-                # gl, dl_real, dl_fake, real_acc, fake_acc = train_step(gen_images, disc_images, labels_batch, gamma_i * (g_i%2))
+                random_noise = tf.random.normal([gen_images.shape[0], NOISE_DIM])
+                random_label = np.random.randint(0, num_classes, gen_images.shape[0]).reshape((-1, 1))
+                gl, dl_real, dl_fake, real_acc, fake_acc = train_step(gen_images, disc_images, labels_batch, gamma_i, random_noise, random_label)
                 d_acc_fake.append(fake_acc.numpy())
                 d_acc_real.append(real_acc.numpy())
                 g_loss.append(gl)
@@ -290,4 +277,4 @@ if __name__ == "__main__":
     fakes = generator([seed, seed_labels, replace_images], training=False)
     generate_and_save_images(generator, 0, seed, seed_labels, replace_images)
 
-    train(image_ground_truth, epochs=500, ckpt_prefix=checkpoint_prefix, save_epoch=100, image_epoch=20)
+    train(image_ground_truth, epochs=500, ckpt_prefix=checkpoint_prefix, save_epoch=100, image_epoch=10)
