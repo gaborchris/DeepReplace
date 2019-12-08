@@ -13,6 +13,7 @@ import itertools
 
 BATCH_SIZE = 256
 NOISE_DIM = 100
+num_classes = 62
 
 num_to_char = {}
 alphabet = 'abcdefghijklmnopqrstuvwxyz'
@@ -152,7 +153,6 @@ image_ground_truth = image_generator.flow_from_directory(image_path, target_size
                                                          class_mode='sparse')
 
 # Define Model
-num_classes = 62
 
 generator = make_generator_model(n_classes=num_classes)
 generator_optimizer = tf.keras.optimizers.Adam(6e-4)
