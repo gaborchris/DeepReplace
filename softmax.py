@@ -232,10 +232,12 @@ if __name__ == "__main__":
 
 
 
-    # checkpoint = tf.train.Checkpoint(generator_optimizer=generator_optimizer,
-    #                                  discriminator_optimizer=discriminator_optimizer,
-    #                                  generator=generator,
-    #                                  discriminator=discriminator)
+    checkpoint = tf.train.Checkpoint(generator_optimizer=generator_optimizer,
+                                     discriminator_optimizer=discriminator_optimizer,
+                                     softmax_optimizer=softmax_optimizer,
+                                     softmax_discriminator=softmax_discriminator,
+                                     generator=generator,
+                                     discriminator=discriminator)
 
     num_examples_to_generate = 16
     seed = tf.random.normal([num_examples_to_generate, NOISE_DIM])
@@ -311,8 +313,8 @@ if __name__ == "__main__":
 
             if (epoch + 1) % image_epoch == 0:
                 generate_and_save_images(generator, epoch + 1, seed, seed_labels, replace_images)
-            # if (epoch + 1) % save_epoch == 0:
-            #     checkpoint.save(file_prefix=ckpt_prefix)
+            if (epoch + 1) % save_epoch == 0:
+                checkpoint.save(file_prefix=ckpt_prefix)
 
             print('Time for epoch {} is {} sec'.format(epoch + 1, time.time() - start))
             print('Generator:', average(g_loss), 'Disc Real:', average(d_loss_real), 'Disc Fake:', average(d_loss_fake))
@@ -324,7 +326,7 @@ if __name__ == "__main__":
 
 
     # checkpoint_dir = '/home/ubuntu/checkpoints/'
-    checkpoint_dir = '/home/christian/checkpoints/5e-3/'
+    checkpoint_dir = '/home/christian/checkpoints/softmax/'
     checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
 
     # status = checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
@@ -334,4 +336,4 @@ if __name__ == "__main__":
     fakes = generator([seed, seed_labels, replace_images], training=False)
     generate_and_save_images(generator, 0, seed, seed_labels, replace_images)
 
-    train(image_ground_truth, epochs=500, ckpt_prefix=checkpoint_prefix, save_epoch=100, image_epoch=1)
+    train(image_ground_truth, epochs=500, ckpt_prefix=checkpoint_prefix, save_epoch=20, image_epoch=5)
