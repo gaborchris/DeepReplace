@@ -20,13 +20,11 @@ BATCH_SIZE = 16
 NOISE_DIM = 100
 num_classes = 62
 
-# GAMMA = 5e-3
-# GAMMA_DECAY = 0.95
-# GAMMA = 1.66e-5
 GAMMA = 5e-2
-GAMMA_DECAY = 1.00
-G_LR = 3e-4
+GAMMA_DECAY = 1.0
+G_LR = 6e-4
 D_LR = 1e-4
+SM_LR = 1e-5
 
 num_to_char = {}
 alphabet = 'abcdefghijklmnopqrstuvwxyz'
@@ -72,30 +70,30 @@ def make_generator_model(n_classes=10):
 
     # create style detection network
     input_style = tf.keras.layers.Input(shape=(28, 28, 3))
-    x = tf.keras.layers.Conv2D(128, (3, 3), strides=(2, 2), padding='same')(input_style)
+    x = tf.keras.layers.Conv2D(32, (3, 3), strides=(2, 2), padding='same')(input_style)
     x = tf.keras.layers.LeakyReLU()(x)
     x = tf.keras.layers.Dropout(0.4)(x)
-    x = tf.keras.layers.Conv2D(128, (3, 3), strides=(2, 2), padding='same')(x)
+    x = tf.keras.layers.Conv2D(32, (3, 3), strides=(2, 2), padding='same')(x)
     x = tf.keras.layers.LeakyReLU()(x)
     x = tf.keras.layers.Dropout(0.4)(x)
-    assert tuple(x.shape) == (None, 7, 7, 128)
+    assert tuple(x.shape) == (None, 7, 7, 32)
 
     # Create class embedding channel
     input_label = tf.keras.layers.Input(shape=(1,))
     label_embedding = tf.keras.layers.Embedding(n_classes, 50)(input_label)
-    upscaling = tf.keras.layers.Dense(7 * 7 * 128)(label_embedding)
-    upscaling = tf.keras.layers.Reshape((7, 7, 128))(upscaling)
+    upscaling = tf.keras.layers.Dense(7 * 7 * 1)(label_embedding)
+    upscaling = tf.keras.layers.Reshape((7, 7, 1))(upscaling)
 
     # create seed encoding network
     seed_input = tf.keras.layers.Input(shape=(NOISE_DIM,))
-    seed_fc = tf.keras.layers.Dense(7 * 7 * 32, use_bias=False)(seed_input)
+    seed_fc = tf.keras.layers.Dense(7 * 7 * 128, use_bias=False)(seed_input)
     seed_fc = tf.keras.layers.BatchNormalization()(seed_fc)
     seed_fc = tf.keras.layers.LeakyReLU()(seed_fc)
-    seed_fc = tf.keras.layers.Reshape((7, 7, 32))(seed_fc)
+    seed_fc = tf.keras.layers.Reshape((7, 7, 128))(seed_fc)
 
     # merge embedding with seed encoder
     merge = tf.keras.layers.Concatenate()([seed_fc, x, upscaling])
-    assert tuple(merge.shape) == (None, 7, 7, 128 + 128 + 32)
+    assert tuple(merge.shape) == (None, 7, 7, 128 + 32 + 1)
 
     x = layers.Conv2DTranspose(128, (5, 5), strides=(1, 1), padding='same', use_bias=False)(merge)
     x = layers.BatchNormalization()(x)
@@ -181,7 +179,8 @@ def softmax_loss(y_true, y_pred):
 
 
 def discriminator_loss(real_output, fake_output):
-    cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=False, label_smoothing=0.1)
+    # cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=False, label_smoothing=0.1)
+    cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=False)
     real_loss = cross_entropy(tf.ones_like(real_output), real_output)
     real_acc = tf.reduce_mean(tf.round(real_output))
     fake_loss = cross_entropy(tf.zeros_like(fake_output), fake_output)
@@ -192,14 +191,16 @@ def discriminator_loss(real_output, fake_output):
 
 def generator_loss(predictions, output, input, softmax_preds, label, gamma):
     cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-    cross_entropy_2 = tf.keras.losses.BinaryCrossentropy(from_logits=False, label_smoothing=0.1)
+    # cross_entropy_2 = tf.keras.losses.BinaryCrossentropy(from_logits=False, label_smoothing=0.1)
+    cross_entropy_2 = tf.keras.losses.BinaryCrossentropy(from_logits=False)
     base_loss = cross_entropy(tf.ones_like(predictions), predictions)
     idx = tf.transpose(tf.stack((tf.dtypes.cast(tf.range(softmax_preds.shape[0]), tf.int64), label[:, 0])))
     label_preds = tf.gather_nd(softmax_preds, idx)
     softmax_loss = cross_entropy_2(tf.ones_like(predictions), label_preds)
     reg_loss = base_loss + gamma*tf.norm(output - input)/output.shape[0]
-    # total_loss = reg_loss + softmax_loss
-    return base_loss, reg_loss, softmax_loss
+    total_loss = reg_loss + 0.2*softmax_loss
+    # return base_loss, reg_loss, softmax_loss
+    return base_loss, total_loss, softmax_loss
 
 
 if __name__ == "__main__":
@@ -223,11 +224,11 @@ if __name__ == "__main__":
     # Define Model
 
     generator = make_generator_model(n_classes=num_classes)
-    generator_optimizer = tf.keras.optimizers.Adam(G_LR)
+    generator_optimizer = tf.keras.optimizers.RMSprop(G_LR)
     discriminator = make_discriminator_model(n_classes=num_classes)
     discriminator_optimizer = tf.keras.optimizers.Adam(D_LR)
     softmax_discriminator = make_softmax_model(n_classes=num_classes)
-    softmax_optimizer = tf.keras.optimizers.Adam(3e-4)
+    softmax_optimizer = tf.keras.optimizers.Adam(SM_LR)
 
 
 
@@ -264,13 +265,14 @@ if __name__ == "__main__":
         grads_of_softmax = sm_tape.gradient(sm_disc_loss, softmax_discriminator.trainable_variables)
         softmax_optimizer.apply_gradients(zip(grads_of_softmax, softmax_discriminator.trainable_variables))
 
-        gradients_of_generator = gen_tape.gradient((gen_reg_loss, gen_sm_loss), generator.trainable_variables)
+        # gradients_of_generator = gen_tape.gradient((gen_reg_loss, gen_sm_loss), generator.trainable_variables)
+        gradients_of_generator = gen_tape.gradient((gen_reg_loss), generator.trainable_variables)
         generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
 
         gradients_of_discriminator = disc_tape.gradient(disc_loss, discriminator.trainable_variables)
         discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, discriminator.trainable_variables))
 
-        return gen_loss, disc_loss_real, disc_loss_fake, real_acc, fake_acc, sm_disc_loss
+        return gen_loss, disc_loss_real, disc_loss_fake, real_acc, fake_acc, sm_disc_loss, gen_sm_loss
 
 
     def train(dataset, epochs, ckpt_prefix, save_epoch=20, image_epoch=20):
@@ -286,18 +288,20 @@ if __name__ == "__main__":
             d_acc_fake = []
             d_acc_real = []
             sm_loss = []
+            gen_sm_loss = []
             for (image_batch, labels_batch) in dataset:
                 gen_images = image_batch
                 disc_images, labels_batch = next(dataset)
                 noise = tf.random.normal([gen_images.shape[0], NOISE_DIM])
                 random_labels = np.random.randint(0, num_classes, gen_images.shape[0]).reshape((-1, 1))
-                gl, dl_real, dl_fake, real_acc, fake_acc, softmax_loss = train_step(gen_images, disc_images, labels_batch, gamma_i, random_labels, noise)
+                gl, dl_real, dl_fake, real_acc, fake_acc, softmax_loss, gen_sm = train_step(gen_images, disc_images, labels_batch, gamma_i, random_labels, noise)
                 sm_loss.append(softmax_loss)
                 d_acc_fake.append(fake_acc.numpy())
                 d_acc_real.append(real_acc.numpy())
                 g_loss.append(gl)
                 d_loss_real.append(dl_real)
                 d_loss_fake.append(dl_fake)
+                gen_sm_loss.append(gen_sm)
                 i += 1
                 if i > len(dataset):
                     break
@@ -312,7 +316,7 @@ if __name__ == "__main__":
 
             print('Time for epoch {} is {} sec'.format(epoch + 1, time.time() - start))
             print('Generator:', average(g_loss), 'Disc Real:', average(d_loss_real), 'Disc Fake:', average(d_loss_fake))
-            print('SM loss:', average(sm_loss))
+            print('SM loss:', average(sm_loss), 'gen softmax', average(gen_sm_loss))
             print('real acc:', average(d_acc_real), 'fake acc:', average(d_acc_fake))
             with open('out.txt', 'a') as f:
                 print(str(average(g_loss)), str(average(d_loss_real)), str(average(d_loss_fake)),
@@ -330,4 +334,4 @@ if __name__ == "__main__":
     fakes = generator([seed, seed_labels, replace_images], training=False)
     generate_and_save_images(generator, 0, seed, seed_labels, replace_images)
 
-    train(image_ground_truth, epochs=500, ckpt_prefix=checkpoint_prefix, save_epoch=100, image_epoch=5)
+    train(image_ground_truth, epochs=500, ckpt_prefix=checkpoint_prefix, save_epoch=100, image_epoch=1)
